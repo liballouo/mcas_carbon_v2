@@ -15,6 +15,10 @@
 *.txt
 !requirements.txt
 
+output/
+*.png
+*.keras
+*.npy
 __pycache__/
 
 *pt
