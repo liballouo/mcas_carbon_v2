@@ -11,3 +11,9 @@
 *.gif
 *.webp
 
+*.json
+*.txt
+
+__pycache__/
+
+*pt
