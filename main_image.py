@@ -14,7 +14,7 @@ from pose_recognition import PoseRecognizer
 def parse_args():
     parser = argparse.ArgumentParser(description='人流追蹤和熱力圖生成')
     parser.add_argument('--image', type=str, help='輸入單張圖片路徑 (如: test.png)')
-    parser.add_argument('--config', type=str, choices=['2', 'lecture_room', 'computer_room_A', 'computer_room_B', 'hall_A', 'hall_B'], 
+    parser.add_argument('--config', type=str, choices=['lecture_room', 'computer_room_A', 'computer_room_B', 'hall_A', 'hall_B'], 
                       help='選擇預設的點位配置')
     parser.add_argument('--model', type=str, default='yolov9e.pt', 
                       help='YOLO模型路徑 (default: yolov9e.pt)')

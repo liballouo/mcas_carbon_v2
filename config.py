@@ -1,11 +1,5 @@
 # 定義不同視頻的點位參數
 POINTS_CONFIGS = {
-    '2': {
-        'topleft': [550, 560],
-        'bottomleft': [600, 700],
-        'topright': [900, 500],
-        'bottomright': [1020, 600]
-    },
     # 演講廳
     'lecture_room': {
         'topleft': [0, 0],
