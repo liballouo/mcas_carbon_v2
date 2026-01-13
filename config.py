@@ -8,28 +8,28 @@ POINTS_CONFIGS = {
         'bottomright': [1850, 600]
     },
     # 電腦教室視角A
-    'computer_room_A': {
+    'computer_room_1': {
         'topleft': [0, 50],
         'bottomleft': [-10, 800],
         'topright': [1850, -10],
         'bottomright': [2000, 300]
     },
     # 電腦教室視角B
-    'computer_room_B': {
+    'computer_room_2': {
         'topleft': [800, 125],
         'bottomleft': [-350, 350],
         'topright': [1700, 250],
         'bottomright': [1200, 1200]
     },
     # 大廳視角A
-    'hall_A': {
+    'hall_1': {
         'topleft': [50, 200],
         'bottomleft': [225, 1150],
         'topright': [1050, 50],
         'bottomright': [1950, 500]
     },
     # 大廳視角B
-    'hall_B': {
+    'hall_2': {
         'topleft': [200, 300],
         'bottomleft': [325, 1150],
         'topright': [1350, 200],
@@ -45,25 +45,25 @@ PREDICTION_THRESHOLDS_CONFIG = {
         "bf": {"conf": 0.2, "iou": 0.1},
         "br": {"conf": 0.2, "iou": 0.1}
     },
-    'computer_room_A': {
+    'computer_room_1': {
         "tf": {"conf": 0.1, "iou": 0.1},
         "tr": {"conf": 0.1, "iou": 0.1},
         "bf": {"conf": 0.1, "iou": 0.1},
         "br": {"conf": 0.1, "iou": 0.1}
     },
-    'computer_room_B': {
+    'computer_room_2': {
         "tf": {"conf": 0.1, "iou": 0.1},
         "tr": {"conf": 0.1, "iou": 0.1},
         "bf": {"conf": 0.1, "iou": 0.1},
         "br": {"conf": 0.1, "iou": 0.1}
     },
-    'hall_A': {
+    'hall_1': {
         "tf": {"conf": 0.1, "iou": 0.1},
         "tr": {"conf": 0.1, "iou": 0.1},
         "bf": {"conf": 0.1, "iou": 0.1},
         "br": {"conf": 0.1, "iou": 0.1}
     },
-    'hall_B': {
+    'hall_2': {
         "tf": {"conf": 0.1, "iou": 0.1},
         "tr": {"conf": 0.1, "iou": 0.1},
         "bf": {"conf": 0.1, "iou": 0.1},
