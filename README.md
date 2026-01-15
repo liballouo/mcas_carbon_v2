@@ -12,9 +12,6 @@
 pip install -r requirements.txt
 ```
 
-### 3. 下載 YOLO 模型
-將 `yolov9e.pt` 模型檔案放置於專案根目錄
-
 ---
 
 ## 使用方法
