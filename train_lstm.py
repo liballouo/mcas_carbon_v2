@@ -359,7 +359,7 @@ def evaluate_and_plot(
     plt.tight_layout()
     
     # 儲存圖表
-    plot_path = os.path.join(save_dir, 'lstm_results.png')
+    plot_path = os.path.join(save_dir, 'lstm_padded_results.png')
     plt.savefig(plot_path, dpi=150, bbox_inches='tight')
     print(f"\n圖表已儲存: {plot_path}")
     
@@ -383,10 +383,11 @@ def plot_daily_predictions(
     y_test_int: np.ndarray,
     y_pred_int: np.ndarray,
     save_dir: str,
-    samples_per_day: int = 94
+    samples_per_day: int = 106  # 118 步 - 12 (lookback) = 106 個預測點
 ):
     """
     分日顯示預測結果（整數人數版本）
+    時間從 08:00 開始（因為 07:00-07:55 是補零區間，lookback=12 後從 08:00 開始預測）
     """
     n_days = len(y_test_int) // samples_per_day
     
@@ -399,7 +400,8 @@ def plot_daily_predictions(
         
         ax = axes[day] if n_days > 1 else axes
         
-        # 時間標籤：從 09:00 開始（因為 lookback=12，損失前 12 個時間步 = 1 小時）
+        # 時間標籤：從 08:00 開始（補零 07:00-07:55 + lookback=12 後）
+        # 每 5 分鐘一步，共 106 步 = 08:00 到 16:45
         time_labels = np.arange(samples_per_day)
         
         actual = y_test_int[start_idx:end_idx]
@@ -412,7 +414,7 @@ def plot_daily_predictions(
         day_mae = mean_absolute_error(actual, predicted)
         
         ax.set_title(f'Day {day + 11} (Test Day {day + 1}) - RMSE: {day_rmse:.2f}, MAE: {day_mae:.2f}', fontsize=12, pad=10)
-        ax.set_xlabel('Time Step (5-min intervals from 09:00)', fontsize=10)
+        ax.set_xlabel('Time Step (5-min intervals from 08:00)', fontsize=10)
         ax.set_ylabel('People Count', fontsize=10)
         ax.legend(loc='upper right')
         ax.grid(True, alpha=0.3)
@@ -426,7 +428,7 @@ def plot_daily_predictions(
     plt.subplots_adjust(hspace=0.4)
     plt.tight_layout()
     
-    plot_path = os.path.join(save_dir, 'lstm_daily_results.png')
+    plot_path = os.path.join(save_dir, 'lstm_daily_padded_results.png')
     plt.savefig(plot_path, dpi=150, bbox_inches='tight')
     print(f"Daily prediction results saved: {plot_path}")
     
@@ -451,7 +453,7 @@ def main():
     print("\n[階段 1] 資料準備")
     
     data = prepare_lstm_data(
-        data_path='./lstm_data.npy',
+        data_path='./lstm_data_padded.npy',  # 使用補零版本（07:00-07:55 補零）
         train_days=10,
         test_days=5,
         lookback=12,

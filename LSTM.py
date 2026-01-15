@@ -5,17 +5,19 @@ LSTM 資料前處理腳本
 資料流程:
 1. 載入多個 JSON 檔案
 2. 時間索引與重採樣
-3. 缺失值插補
-4. 時間區間過濾 (08:00-16:45)
+3. 缺失值插補 + 零填充 (07:00-08:00)
+4. 時間區間過濾 (07:00-16:45)
 5. 特徵工程（正規化）
 6. 序列建構（3D 陣列）
+
+注意: 將起始時間提前到 07:00 並補零，可讓 lookback=12 時從 08:00 開始有效預測
 """
 
 import os
 import json
 import numpy as np
 import pandas as pd
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from typing import Tuple, List, Optional
 from sklearn.preprocessing import MinMaxScaler
 
@@ -24,15 +26,19 @@ from sklearn.preprocessing import MinMaxScaler
 # 常數設定
 # ============================================================================
 
-# 時間區間設定
-START_TIME = time(8, 0, 0)    # 開始時間: 08:00
+# 時間區間設定（提前 1 小時以支援 lookback 補零）
+START_TIME = time(7, 0, 0)    # 開始時間: 07:00（補零區間開始）
+DATA_START_TIME = time(8, 0, 0)  # 實際資料開始時間: 08:00
 END_TIME = time(16, 45, 0)    # 結束時間: 16:45
 INTERVAL_MINUTES = 5          # 採樣間隔: 5 分鐘
 
 # 計算每天應有的時間步數
-# 從 08:00 到 16:45 共 8 小時 45 分鐘 = 525 分鐘
-# 每 5 分鐘一筆: 525 / 5 + 1 = 106 筆（包含起點和終點）
-EXPECTED_STEPS_PER_DAY = 106
+# 從 07:00 到 16:45 共 9 小時 45 分鐘 = 585 分鐘
+# 每 5 分鐘一筆: 585 / 5 + 1 = 118 筆（包含起點和終點）
+EXPECTED_STEPS_PER_DAY = 118
+
+# 補零的時間步數（07:00-07:55，共 12 步）
+PADDING_STEPS = 12
 
 # 正規化參數
 MAX_CAPACITY = 100  # 假設最大人數容量
@@ -102,13 +108,17 @@ def convert_to_datetime_index(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def resample_and_interpolate(df: pd.DataFrame) -> pd.DataFrame:
+def resample_and_interpolate(df: pd.DataFrame, pad_zeros: bool = True) -> pd.DataFrame:
     """
     對資料進行重採樣，確保嚴格的 5 分鐘間隔
     並對缺失值進行線性插補
     
+    新增功能: 在 07:00-08:00 區間補零（Zero Padding）
+    這樣 lookback=12 時，從 08:00 開始就能有有效預測
+    
     Args:
         df: 時間索引的 DataFrame
+        pad_zeros: 是否在 07:00-08:00 補零
         
     Returns:
         重採樣並插補後的 DataFrame
@@ -123,7 +133,31 @@ def resample_and_interpolate(df: pd.DataFrame) -> pd.DataFrame:
         # 使用 '5min' 作為頻率，取每個區間的平均值
         daily_resampled = group[['people_count']].resample('5min').mean()
         
-        # 線性插補缺失值
+        # ====================================================================
+        # 零填充 (Zero Padding): 在 07:00-07:55 補零
+        # ====================================================================
+        if pad_zeros:
+            # 建立 07:00-07:55 的時間索引（12 個時間點）
+            padding_start = pd.Timestamp(year=date.year, month=date.month, day=date.day,
+                                         hour=7, minute=0, second=0)
+            padding_times = pd.date_range(start=padding_start, periods=PADDING_STEPS, freq='5min')
+            
+            # 建立補零的 DataFrame
+            padding_df = pd.DataFrame(
+                {'people_count': 0.0},
+                index=padding_times
+            )
+            
+            # 合併補零資料與原始資料
+            daily_resampled = pd.concat([padding_df, daily_resampled])
+            
+            # 移除重複索引（保留原始資料）
+            daily_resampled = daily_resampled[~daily_resampled.index.duplicated(keep='last')]
+            
+            # 重新排序
+            daily_resampled = daily_resampled.sort_index()
+        
+        # 線性插補缺失值（僅針對 08:00 之後的資料）
         daily_resampled['people_count'] = daily_resampled['people_count'].interpolate(
             method='linear',
             limit_direction='both'
@@ -137,12 +171,17 @@ def resample_and_interpolate(df: pd.DataFrame) -> pd.DataFrame:
     # 移除可能的重複索引
     result = result[~result.index.duplicated(keep='first')]
     
+    print(f"\n零填充 (Zero Padding): {'已啟用' if pad_zeros else '已停用'}")
+    if pad_zeros:
+        print(f"  補零區間: 07:00-07:55 (共 {PADDING_STEPS} 個時間步)")
+    
     return result
 
 
 def filter_time_window(df: pd.DataFrame) -> pd.DataFrame:
     """
-    過濾資料，只保留 08:00 至 16:45 之間的記錄
+    過濾資料，只保留 07:00 至 16:45 之間的記錄
+    （包含補零區間 07:00-08:00）
     
     Args:
         df: 時間索引的 DataFrame
@@ -150,7 +189,7 @@ def filter_time_window(df: pd.DataFrame) -> pd.DataFrame:
     Returns:
         過濾後的 DataFrame
     """
-    # 取得每筆記錄的時間部分
+    # 取得每筆記錄的時間部分（從 07:00 開始以包含補零區間）
     time_mask = (df.index.time >= START_TIME) & (df.index.time <= END_TIME)
     
     filtered_df = df[time_mask].copy()
@@ -161,6 +200,7 @@ def filter_time_window(df: pd.DataFrame) -> pd.DataFrame:
     
     print(f"\n時間過濾: 保留 {filtered_count} 筆, 移除 {removed_count} 筆")
     print(f"時間範圍: {START_TIME} - {END_TIME}")
+    print(f"  (含補零區間 07:00-08:00)")
     
     return filtered_df
 
@@ -736,12 +776,13 @@ def create_xy_pairs(
 def main():
     """
     主程式：使用時序分割準備 LSTM 資料
+    （使用補零版本：07:00-08:00 補零以支援從 08:00 開始預測）
     """
-    # 方法一：如果已有 lstm_data.npy，直接使用新的時序分割
-    DATA_PATH = './lstm_data.npy'
+    # 方法一：如果已有 lstm_data_padded.npy，直接使用新的時序分割
+    DATA_PATH = './lstm_data_padded.npy'
     
     if os.path.exists(DATA_PATH):
-        print("使用已存在的預處理資料...")
+        print("使用已存在的預處理資料（補零版本）...")
         result = prepare_lstm_data(
             data_path=DATA_PATH,
             train_days=10,      # 前 2 週（10 個工作日）
@@ -756,7 +797,7 @@ def main():
     
     # 方法二：如果沒有 npy 檔案，先執行前處理
     else:
-        print("未找到預處理資料，開始前處理流程...")
+        print("未找到預處理資料，開始前處理流程（含補零）...")
         config = {
             'data_dir': './output',
             'max_capacity': 100,
