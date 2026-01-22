@@ -6,10 +6,23 @@
     2. 將每一影格儲存為獨立的圖片檔案
     3. 將每個對應的JSON物件儲存為獨立的JSON檔案
     4. 支援處理 output 資料夾中各場域的影片
+    5. 支援 GPU 加速 (需要 CUDA 支援的 OpenCV)
 
 使用方式：
-    python extract_frames.py --video 影片路徑.mp4 --json JSON路徑.json --output 輸出資料夾
-    python extract_frames.py --batch  # 批次處理所有場域的影片
+    # 只儲存圖片
+    python extract_frames.py --video 影片路徑.mp4 --output 輸出資料夾 --save_images
+    
+    # 只儲存JSON (需要同時提供影片和JSON檔案)
+    python extract_frames.py --video 影片路徑.mp4 --json JSON路徑.json --output 輸出資料夾 --save_json
+    
+    # 同時儲存圖片和JSON
+    python extract_frames.py --video 影片路徑.mp4 --json JSON路徑.json --output 輸出資料夾 --save_images --save_json
+    
+    # 使用 GPU 加速
+    python extract_frames.py --video 影片路徑.mp4 --output 輸出資料夾 --save_images --use_gpu
+    
+    # 批次處理所有場域的影片
+    python extract_frames.py --batch --save_images --save_json
 
 命名規則：
     {場域名稱}_{YYYYMMDDHHMMSS}.jpg
@@ -25,6 +38,45 @@ import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from tqdm import tqdm
+
+
+# ============================================================
+# GPU 支援檢測
+# ============================================================
+
+def check_gpu_available() -> bool:
+    """
+    檢查是否有可用的 CUDA GPU
+    
+    Returns:
+        是否有可用的 GPU
+    """
+    try:
+        # 檢查 OpenCV 是否有 CUDA 支援
+        if cv2.cuda.getCudaEnabledDeviceCount() > 0:
+            return True
+    except:
+        pass
+    return False
+
+
+def get_gpu_info() -> str:
+    """
+    取得 GPU 資訊
+    
+    Returns:
+        GPU 資訊字串
+    """
+    try:
+        if check_gpu_available():
+            device_count = cv2.cuda.getCudaEnabledDeviceCount()
+            return f"找到 {device_count} 個 CUDA GPU"
+    except:
+        pass
+    return "無可用的 CUDA GPU"
+
+
+GPU_AVAILABLE = check_gpu_available()
 
 
 # ============================================================
@@ -128,32 +180,48 @@ def format_timestamp(base_time: datetime, frame_index: int) -> str:
 
 def extract_frames_from_video(
     video_path: str,
-    json_path: str,
-    output_dir: str,
+    json_path: str = None,
+    output_dir: str = None,
     prefix: str = None,
-    use_timestamp: bool = True
+    use_timestamp: bool = True,
+    save_images: bool = True,
+    save_json: bool = True,
+    use_gpu: bool = False
 ) -> bool:
     """
     從影片中提取影格並儲存對應的JSON資料
     
     Args:
         video_path: 影片檔案路徑
-        json_path: JSON預測檔案路徑
+        json_path: JSON預測檔案路徑 (如果 save_json=True 則必須提供)
         output_dir: 輸出目錄
         prefix: 檔案命名前綴 (如果為None則自動從影片檔名解析)
         use_timestamp: 是否在檔名中使用時間戳記
+        save_images: 是否儲存圖片
+        save_json: 是否儲存JSON
+        use_gpu: 是否使用 GPU 加速
     
     Returns:
         是否成功處理
     """
+    # 檢查至少要儲存一種類型
+    if not save_images and not save_json:
+        print("錯誤: 必須至少選擇儲存圖片或JSON其中之一 (--save_images 或 --save_json)")
+        return False
+    
     # 檢查檔案是否存在
     if not os.path.exists(video_path):
         print(f"錯誤: 影片檔案不存在 - {video_path}")
         return False
     
-    if not os.path.exists(json_path):
-        print(f"錯誤: JSON檔案不存在 - {json_path}")
-        return False
+    # 如果需要儲存JSON，則必須提供JSON檔案路徑
+    if save_json:
+        if json_path is None:
+            print("錯誤: 儲存JSON需要提供JSON檔案路徑 (--json)")
+            return False
+        if not os.path.exists(json_path):
+            print(f"錯誤: JSON檔案不存在 - {json_path}")
+            return False
     
     # 解析影片檔名
     video_info = parse_video_filename(video_path)
@@ -165,30 +233,51 @@ def extract_frames_from_video(
     # 建立輸出目錄
     os.makedirs(output_dir, exist_ok=True)
     
-    # 讀取JSON檔案
-    print(f"讀取JSON檔案: {json_path}")
-    try:
-        with open(json_path, 'r', encoding='utf-8') as f:
-            json_data = json.load(f)
-    except json.JSONDecodeError as e:
-        print(f"錯誤: JSON解析失敗 - {e}")
-        return False
+    # 讀取JSON檔案（如果需要）
+    results = None
+    json_count = 0
+    if save_json and json_path:
+        print(f"讀取JSON檔案: {json_path}")
+        try:
+            with open(json_path, 'r', encoding='utf-8') as f:
+                json_data = json.load(f)
+        except json.JSONDecodeError as e:
+            print(f"錯誤: JSON解析失敗 - {e}")
+            return False
+        
+        # 確認JSON結構
+        if isinstance(json_data, dict) and "results" in json_data:
+            results = json_data["results"]
+        elif isinstance(json_data, list):
+            results = json_data
+        else:
+            print(f"錯誤: 不支援的JSON結構")
+            return False
+        
+        json_count = len(results)
+        print(f"JSON資料筆數: {json_count}")
     
-    # 確認JSON結構
-    if isinstance(json_data, dict) and "results" in json_data:
-        results = json_data["results"]
-    elif isinstance(json_data, list):
-        results = json_data
-    else:
-        print(f"錯誤: 不支援的JSON結構")
-        return False
-    
-    json_count = len(results)
-    print(f"JSON資料筆數: {json_count}")
+    # 檢查 GPU 支援
+    actual_use_gpu = False
+    if use_gpu:
+        if GPU_AVAILABLE:
+            actual_use_gpu = True
+            print(f"GPU 加速: 已啟用 ({get_gpu_info()})")
+        else:
+            print("警告: 無法使用 GPU 加速，將使用 CPU 處理")
+            print("  提示: 需要安裝支援 CUDA 的 OpenCV (opencv-contrib-python 或自行編譯)")
     
     # 開啟影片
     print(f"開啟影片: {video_path}")
-    cap = cv2.VideoCapture(video_path)
+    
+    # 使用 GPU 加速時，嘗試使用硬體解碼
+    if actual_use_gpu:
+        # 嘗試使用 CUDA 視訊解碼器
+        cap = cv2.VideoCapture(video_path, cv2.CAP_FFMPEG)
+        # 設定硬體加速
+        cap.set(cv2.CAP_PROP_HW_ACCELERATION, cv2.VIDEO_ACCELERATION_ANY)
+    else:
+        cap = cv2.VideoCapture(video_path)
     
     if not cap.isOpened():
         print(f"錯誤: 無法開啟影片 - {video_path}")
@@ -205,20 +294,41 @@ def extract_frames_from_video(
     print(f"  - FPS: {fps}")
     print(f"  - 解析度: {width}x{height}")
     
-    # 檢查影格數與JSON資料筆數是否相符
-    if total_frames != json_count:
-        print(f"警告: 影格數 ({total_frames}) 與 JSON資料筆數 ({json_count}) 不符!")
-        print(f"將使用較小的數量: {min(total_frames, json_count)}")
+    # 決定處理數量
+    if save_json and results:
+        if total_frames != json_count:
+            print(f"警告: 影格數 ({total_frames}) 與 JSON資料筆數 ({json_count}) 不符!")
+            print(f"將使用較小的數量: {min(total_frames, json_count)}")
+        process_count = min(total_frames, json_count)
+    else:
+        process_count = total_frames
     
-    process_count = min(total_frames, json_count)
+    # 顯示輸出模式
+    output_mode = []
+    if save_images:
+        output_mode.append("圖片")
+    if save_json:
+        output_mode.append("JSON")
     
     print(f"\n開始處理...")
     print(f"輸出目錄: {output_dir}")
     print(f"檔案前綴: {prefix}")
+    print(f"輸出類型: {' + '.join(output_mode)}")
+    if actual_use_gpu:
+        print(f"處理模式: GPU 加速")
     
     # 處理每一影格
     success_count = 0
     fail_count = 0
+    
+    # GPU 加速時使用的 CUDA 編碼器
+    gpu_encoder = None
+    if actual_use_gpu and save_images:
+        try:
+            # 嘗試建立 GPU 編碼器
+            gpu_encoder = cv2.cudacodec.createVideoWriter if hasattr(cv2, 'cudacodec') else None
+        except:
+            gpu_encoder = None
     
     for frame_idx in tqdm(range(process_count), desc="處理進度"):
         # 讀取影格
@@ -237,18 +347,36 @@ def extract_frames_from_video(
             filename_base = f"{video_info['location']}_{str(frame_idx + 1).zfill(ZERO_PADDING)}"
         
         # 儲存圖片
-        image_path = os.path.join(output_dir, f"{filename_base}.{IMAGE_FORMAT}")
-        cv2.imwrite(image_path, frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
-        
-        # 準備JSON資料，加入時間戳記
-        frame_json = results[frame_idx].copy()
-        if video_info["start_time"]:
-            frame_json["timestamp"] = format_timestamp(video_info["start_time"], frame_idx)
+        if save_images:
+            image_path = os.path.join(output_dir, f"{filename_base}.{IMAGE_FORMAT}")
+            if actual_use_gpu:
+                try:
+                    # 上傳到 GPU 並編碼
+                    gpu_frame = cv2.cuda_GpuMat()
+                    gpu_frame.upload(frame)
+                    # GPU 編碼 JPEG
+                    _, encoded = cv2.imencode(f'.{IMAGE_FORMAT}', frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+                    with open(image_path, 'wb') as f:
+                        f.write(encoded.tobytes())
+                except Exception as e:
+                    # 如果 GPU 編碼失敗，回退到 CPU
+                    cv2.imwrite(image_path, frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+            else:
+                # 使用 imencode + 檔案寫入來支援中文路徑
+                _, encoded = cv2.imencode(f'.{IMAGE_FORMAT}', frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+                with open(image_path, 'wb') as f:
+                    f.write(encoded.tobytes())
         
         # 儲存JSON
-        json_output_path = os.path.join(output_dir, f"{filename_base}.json")
-        with open(json_output_path, 'w', encoding='utf-8') as f:
-            json.dump(frame_json, f, ensure_ascii=False, indent=2)
+        if save_json and results:
+            # 準備JSON資料，加入時間戳記
+            frame_json = results[frame_idx].copy()
+            if video_info["start_time"]:
+                frame_json["timestamp"] = format_timestamp(video_info["start_time"], frame_idx)
+            
+            json_output_path = os.path.join(output_dir, f"{filename_base}.json")
+            with open(json_output_path, 'w', encoding='utf-8') as f:
+                json.dump(frame_json, f, ensure_ascii=False, indent=2)
         
         success_count += 1
     
@@ -259,6 +387,7 @@ def extract_frames_from_video(
     print(f"  - 成功: {success_count}")
     print(f"  - 失敗: {fail_count}")
     print(f"  - 輸出目錄: {output_dir}")
+    print(f"  - 輸出類型: {' + '.join(output_mode)}")
     
     return True
 
@@ -299,13 +428,18 @@ def find_video_json_pairs_in_location(output_dir: str, location: str) -> list:
     return sorted(pairs)
 
 
-def batch_process(output_dir: str, locations: list = None) -> None:
+def batch_process(output_dir: str, locations: list = None, 
+                  save_images: bool = True, save_json: bool = True, 
+                  use_gpu: bool = False) -> None:
     """
     批次處理所有場域的影片
     
     Args:
         output_dir: output 資料夾路徑
         locations: 要處理的場域列表
+        save_images: 是否儲存圖片
+        save_json: 是否儲存JSON
+        use_gpu: 是否使用 GPU 加速
     """
     if locations is None:
         locations = LOCATIONS
@@ -347,7 +481,14 @@ def batch_process(output_dir: str, locations: list = None) -> None:
         print(f"輸出到: {output_subdir}")
         print(f"{'='*60}")
         
-        if extract_frames_from_video(video_path, json_path, output_subdir):
+        if extract_frames_from_video(
+            video_path, 
+            json_path if save_json else None, 
+            output_subdir,
+            save_images=save_images,
+            save_json=save_json,
+            use_gpu=use_gpu
+        ):
             success_count += 1
         else:
             fail_count += 1
@@ -414,6 +555,26 @@ def main():
         help='不在檔名中加入時間戳記'
     )
     
+    # 輸出類型選項
+    parser.add_argument(
+        '--save_images',
+        action='store_true',
+        help='儲存圖片檔案 (.jpg)'
+    )
+    
+    parser.add_argument(
+        '--save_json',
+        action='store_true',
+        help='儲存JSON檔案 (需要同時提供 --json 或使用 --batch)'
+    )
+    
+    # GPU 加速選項
+    parser.add_argument(
+        '--use_gpu',
+        action='store_true',
+        help=f'使用 GPU 加速處理 (目前狀態: {"可用" if GPU_AVAILABLE else "不可用"})'
+    )
+    
     parser.add_argument(
         '--dry_run',
         action='store_true',
@@ -421,6 +582,16 @@ def main():
     )
     
     args = parser.parse_args()
+    
+    # 如果沒有指定輸出類型，且沒有 JSON 檔案，預設只儲存圖片
+    # 如果沒有指定任何輸出類型，預設儲存圖片（保持向後相容）
+    save_images = args.save_images
+    save_json = args.save_json
+    
+    # 如果都沒指定，預設儲存圖片
+    if not save_images and not save_json:
+        save_images = True
+        print("提示: 未指定輸出類型，預設儲存圖片 (--save_images)")
     
     # 取得腳本目錄作為參考點
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -432,6 +603,8 @@ def main():
         
         if args.dry_run:
             print(f"[Dry Run] 搜尋 {output_dir} 中的影片...")
+            print(f"輸出類型: {'圖片' if save_images else ''}{' + ' if save_images and save_json else ''}{'JSON' if save_json else ''}")
+            print(f"GPU 加速: {'啟用' if args.use_gpu else '停用'}")
             for location in locations:
                 pairs = find_video_json_pairs_in_location(output_dir, location)
                 for video, json_file in pairs:
@@ -440,23 +613,38 @@ def main():
                     output_subdir = os.path.join(video_dir, video_info["base_name"])
                     print(f"  [{location}]")
                     print(f"    影片: {video}")
-                    print(f"    JSON: {json_file}")
+                    if save_json:
+                        print(f"    JSON: {json_file}")
                     print(f"    輸出: {output_subdir}")
                     print()
             return
         
-        batch_process(output_dir, locations)
+        batch_process(
+            output_dir, 
+            locations,
+            save_images=save_images,
+            save_json=save_json,
+            use_gpu=args.use_gpu
+        )
     
-    elif args.video and args.json:
+    elif args.video:
         # 單一影片處理模式
         video_path = os.path.abspath(args.video)
-        json_path = os.path.abspath(args.json)
+        json_path = os.path.abspath(args.json) if args.json else None
+        
+        # 如果要儲存 JSON 但沒有提供 JSON 檔案
+        if save_json and not json_path:
+            print("錯誤: 儲存JSON需要提供 --json 參數")
+            return
         
         if args.dry_run:
             print(f"[Dry Run] 將處理:")
             print(f"  影片: {video_path}")
-            print(f"  JSON: {json_path}")
+            if json_path:
+                print(f"  JSON: {json_path}")
             print(f"  輸出: {output_dir}")
+            print(f"  輸出類型: {'圖片' if save_images else ''}{' + ' if save_images and save_json else ''}{'JSON' if save_json else ''}")
+            print(f"  GPU 加速: {'啟用' if args.use_gpu else '停用'}")
             return
         
         extract_frames_from_video(
@@ -464,12 +652,24 @@ def main():
             json_path,
             output_dir,
             prefix=args.prefix,
-            use_timestamp=not args.no_timestamp
+            use_timestamp=not args.no_timestamp,
+            save_images=save_images,
+            save_json=save_json,
+            use_gpu=args.use_gpu
         )
     
     else:
         parser.print_help()
-        print("\n請使用 --video 和 --json 指定單一影片，或使用 --batch 進行批次處理")
+        print("\n請使用 --video 指定影片，或使用 --batch 進行批次處理")
+        print("\n範例:")
+        print("  # 只儲存圖片")
+        print("  python extract_frames.py --batch --save_images")
+        print("")
+        print("  # 同時儲存圖片和JSON")
+        print("  python extract_frames.py --batch --save_images --save_json")
+        print("")
+        print("  # 使用GPU加速儲存圖片")
+        print("  python extract_frames.py --batch --save_images --use_gpu")
 
 
 if __name__ == "__main__":
